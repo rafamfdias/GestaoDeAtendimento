@@ -367,7 +367,7 @@
       </button>
       <button id="btnChegou" class="toggle-btn toggle-off"
         onclick="toggleStatusModal('chegou_maquina')">
-        <span class="dot"></span>Não Chegou
+        <span class="dot"></span>Sem Máquina
       </button>
     </div>
     <!-- Adicionar nova observação -->
@@ -556,7 +556,7 @@
     btnA.className = `toggle-btn ${acessoOn ? 'toggle-on' : 'toggle-off'}`;
     btnA.innerHTML = `<span class="dot"></span>${acessoOn ? 'Com Acesso' : 'Sem Acesso'}`;
     btnC.className = `toggle-btn ${chegouOn ? 'toggle-on' : 'toggle-off'}`;
-    btnC.innerHTML = `<span class="dot"></span>${chegouOn ? 'Chegou' : 'Não Chegou'}`;
+    btnC.innerHTML = `<span class="dot"></span>${chegouOn ? 'Com Máquina' : 'Sem Máquina'}`;
   }
 
   async function toggleStatusModal(campo) {

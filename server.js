@@ -3,7 +3,7 @@ const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 const db = new sqlite3.Database(path.join(__dirname, 'atendimentos.db'), (err) => {
   if (err) { console.error('Erro ao abrir banco:', err.message); process.exit(1); }
@@ -175,6 +175,14 @@ app.post('/api/clientes/:id/historico', (req, res) => {
   );
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`\n✅  Servidor rodando em http://localhost:${PORT}\n`);
+});
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`\n❌ Porta ${PORT} em uso. Finalize o processo atual ou rode com outra porta: PORT=3001 npm start\n`);
+    process.exit(1);
+  }
+  throw err;
 });
