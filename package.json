@@ -1,0 +1,13 @@
+{
+  "name": "gestao-atendimentos",
+  "version": "1.0.0",
+  "description": "Sistema de Gestão de Atendimentos",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.3",
+    "sqlite3": "^5.1.7"
+  }
+}
