@@ -54,10 +54,15 @@ app.post('/api/clientes', (req, res) => {
   if (!nome || !telefone || !matricula)
     return res.status(400).json({ erro: 'Campos obrigatórios ausentes.' });
 
+  const matriculaNormalizada = String(matricula).trim().toUpperCase();
+  db.get('SELECT id FROM clientes WHERE matricula = ?', [matriculaNormalizada], (err, existente) => {
+    if (err) return res.status(500).json({ erro: 'Erro ao validar matrícula.' });
+    if (existente) return res.status(409).json({ erro: 'Matrícula já cadastrada.' });
+
   const data_cadastro = new Date().toLocaleDateString('pt-BR');
   db.run(
     'INSERT INTO clientes (nome, telefone, matricula, observacoes, data_cadastro) VALUES (?,?,?,?,?)',
-    [nome, telefone, matricula.toUpperCase(), observacoes || '', data_cadastro],
+    [nome, telefone, matriculaNormalizada, observacoes || '', data_cadastro],
     function (err) {
       if (err) {
         if (err.message.includes('UNIQUE'))
@@ -83,6 +88,7 @@ app.post('/api/clientes', (req, res) => {
       }
     }
   );
+  });
 });
 
 // Atualizar
@@ -92,9 +98,14 @@ app.put('/api/clientes/:id', (req, res) => {
   if (!nome || !telefone || !matricula)
     return res.status(400).json({ erro: 'Campos obrigatórios ausentes.' });
 
+  const matriculaNormalizada = String(matricula).trim().toUpperCase();
+  db.get('SELECT id FROM clientes WHERE matricula = ? AND id <> ?', [matriculaNormalizada, id], (err, existente) => {
+    if (err) return res.status(500).json({ erro: 'Erro ao validar matrícula.' });
+    if (existente) return res.status(409).json({ erro: 'Matrícula já cadastrada por outro registro.' });
+
   db.run(
     'UPDATE clientes SET nome=?, telefone=?, matricula=?, observacoes=? WHERE id=?',
-    [nome, telefone, matricula.toUpperCase(), observacoes || '', id],
+    [nome, telefone, matriculaNormalizada, observacoes || '', id],
     function (err) {
       if (err) {
         if (err.message.includes('UNIQUE'))
@@ -119,6 +130,7 @@ app.put('/api/clientes/:id', (req, res) => {
       }
     }
   );
+  });
 });
 
 // Excluir
