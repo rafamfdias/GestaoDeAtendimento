@@ -61,38 +61,53 @@ db.serialize(() => {
     )
   `);
 
-  // Migra bases antigas com restrição UNIQUE em matricula para permitir repetição.
-  db.get("SELECT sql FROM sqlite_master WHERE type='table' AND name='clientes'", [], (err, row) => {
-    if (err || !row || !row.sql) return;
-    const temUniqueMatricula = /matricula\s+TEXT\s+NOT\s+NULL\s+UNIQUE/i.test(row.sql);
-    if (!temUniqueMatricula) return;
+  // Migra bases antigas com índice/restrição UNIQUE em matricula para permitir repetição.
+  db.all("PRAGMA index_list('clientes')", [], (idxErr, indexes = []) => {
+    if (idxErr || !indexes.length) return;
 
-    db.exec(`
-      PRAGMA foreign_keys=OFF;
-      BEGIN TRANSACTION;
-      CREATE TABLE clientes_new (
-        id             INTEGER PRIMARY KEY AUTOINCREMENT,
-        nome           TEXT NOT NULL,
-        telefone       TEXT NOT NULL,
-        matricula      TEXT NOT NULL,
-        observacoes    TEXT DEFAULT '',
-        data_cadastro  TEXT NOT NULL,
-        acesso_maquina INTEGER DEFAULT 0,
-        chegou_maquina INTEGER DEFAULT 0
-      );
-      INSERT INTO clientes_new (id, nome, telefone, matricula, observacoes, data_cadastro, acesso_maquina, chegou_maquina)
-      SELECT id, nome, telefone, matricula, observacoes, data_cadastro, acesso_maquina, chegou_maquina FROM clientes;
-      DROP TABLE clientes;
-      ALTER TABLE clientes_new RENAME TO clientes;
-      COMMIT;
-      PRAGMA foreign_keys=ON;
-    `, (migrateErr) => {
-      if (migrateErr) {
-        console.error('Erro ao migrar tabela clientes para remover UNIQUE de matricula:', migrateErr.message);
-        return;
-      }
-      console.log('Migração aplicada: matricula agora permite valores repetidos.');
-    });
+    const uniqueIndexes = indexes.filter((idx) => Number(idx.unique) === 1);
+    if (!uniqueIndexes.length) return;
+
+    const hasUniqueMatricula = (i = 0) => {
+      if (i >= uniqueIndexes.length) return;
+      const indexName = String(uniqueIndexes[i].name || '').replace(/'/g, "''");
+      if (!indexName) return hasUniqueMatricula(i + 1);
+
+      db.all(`PRAGMA index_info('${indexName}')`, [], (infoErr, cols = []) => {
+        if (infoErr) return hasUniqueMatricula(i + 1);
+        const afetaMatricula = cols.some((c) => String(c.name || '').toLowerCase() === 'matricula');
+        if (!afetaMatricula) return hasUniqueMatricula(i + 1);
+
+        db.exec(`
+          PRAGMA foreign_keys=OFF;
+          BEGIN TRANSACTION;
+          CREATE TABLE clientes_new (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome           TEXT NOT NULL,
+            telefone       TEXT NOT NULL,
+            matricula      TEXT NOT NULL,
+            observacoes    TEXT DEFAULT '',
+            data_cadastro  TEXT NOT NULL,
+            acesso_maquina INTEGER DEFAULT 0,
+            chegou_maquina INTEGER DEFAULT 0
+          );
+          INSERT INTO clientes_new (id, nome, telefone, matricula, observacoes, data_cadastro, acesso_maquina, chegou_maquina)
+          SELECT id, nome, telefone, matricula, observacoes, data_cadastro, acesso_maquina, chegou_maquina FROM clientes;
+          DROP TABLE clientes;
+          ALTER TABLE clientes_new RENAME TO clientes;
+          COMMIT;
+          PRAGMA foreign_keys=ON;
+        `, (migrateErr) => {
+          if (migrateErr) {
+            console.error('Erro ao migrar tabela clientes para remover UNIQUE de matricula:', migrateErr.message);
+            return;
+          }
+          console.log('Migração aplicada: matricula agora permite valores repetidos.');
+        });
+      });
+    };
+
+    hasUniqueMatricula();
   });
 });
 
