@@ -22,6 +22,17 @@
       gap: 14px;
       box-shadow: 0 2px 8px rgba(0,0,0,0.18);
     }
+    .header-spacer { margin-left: auto; }
+    .header-actions { display: flex; align-items: center; gap: 10px; }
+    .auth-pill {
+      border: 1px solid rgba(255,255,255,0.38);
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      background: rgba(255,255,255,0.08);
+      color: #e2e8f0;
+    }
     header svg { flex-shrink: 0; }
     header h1 { font-size: 1.45rem; font-weight: 600; letter-spacing: 0.3px; }
     header span { font-size: 0.85rem; opacity: 0.75; display: block; margin-top: 2px; font-weight: 400; }
@@ -267,6 +278,11 @@
     <h1>Gestão de Atendimentos</h1>
     <span>Cadastro e controle de colaboradores</span>
   </div>
+  <div class="header-spacer"></div>
+  <div class="header-actions">
+    <span class="auth-pill" id="authStatus">Somente leitura</span>
+    <button class="btn btn-primary" id="btnAuth" type="button" onclick="toggleAuth()">Entrar</button>
+  </div>
 </header>
 
 <div class="container">
@@ -400,6 +416,26 @@
   </div>
 </div>
 
+<!-- Modal: Login Admin -->
+<div class="modal-overlay" id="modalLogin">
+  <div class="modal" style="max-width:400px;">
+    <h2>Login administrativo</h2>
+    <p>Somente administradores podem editar ou excluir cadastros.</p>
+    <div class="form-group" style="margin-bottom:12px;">
+      <label for="loginUsuario">Usuário</label>
+      <input type="text" id="loginUsuario" autocomplete="username" />
+    </div>
+    <div class="form-group">
+      <label for="loginSenha">Senha</label>
+      <input type="password" id="loginSenha" autocomplete="current-password" />
+    </div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="fecharModalLogin()">Cancelar</button>
+      <button class="btn btn-primary" onclick="fazerLogin()">Entrar</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -407,6 +443,104 @@
   let todos = [];
   let deleteId = null;
   let obsClienteId = null;
+  let adminToken = localStorage.getItem('adminToken') || '';
+  let isAdmin = false;
+
+  function authHeaders(base = {}) {
+    if (!adminToken) return base;
+    return { ...base, 'x-admin-token': adminToken };
+  }
+
+  function atualizarEstadoAuthUI() {
+    const status = document.getElementById('authStatus');
+    const botao = document.getElementById('btnAuth');
+    status.textContent = isAdmin ? 'Admin conectado' : 'Somente leitura';
+    botao.textContent = isAdmin ? 'Sair' : 'Entrar';
+    renderTabela();
+    if (!isAdmin) {
+      cancelarEdicao();
+    }
+  }
+
+  async function verificarSessao() {
+    if (!adminToken) {
+      isAdmin = false;
+      atualizarEstadoAuthUI();
+      return;
+    }
+    try {
+      const r = await fetch('/api/auth/status', { headers: authHeaders() });
+      isAdmin = r.ok;
+      if (!isAdmin) {
+        adminToken = '';
+        localStorage.removeItem('adminToken');
+      }
+    } catch {
+      isAdmin = false;
+      adminToken = '';
+      localStorage.removeItem('adminToken');
+    }
+    atualizarEstadoAuthUI();
+  }
+
+  function abrirModalLogin() {
+    document.getElementById('loginUsuario').value = '';
+    document.getElementById('loginSenha').value = '';
+    document.getElementById('modalLogin').classList.add('show');
+    document.getElementById('loginUsuario').focus();
+  }
+
+  function fecharModalLogin() {
+    document.getElementById('modalLogin').classList.remove('show');
+  }
+
+  async function fazerLogin() {
+    const usuario = document.getElementById('loginUsuario').value.trim();
+    const senha = document.getElementById('loginSenha').value;
+    if (!usuario || !senha) {
+      toast('Informe usuário e senha.', 'error');
+      return;
+    }
+    try {
+      const r = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ usuario, senha }),
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        toast(data.erro || 'Falha no login.', 'error');
+        return;
+      }
+      adminToken = data.token;
+      localStorage.setItem('adminToken', adminToken);
+      isAdmin = true;
+      atualizarEstadoAuthUI();
+      fecharModalLogin();
+      toast('Login realizado com sucesso!');
+    } catch {
+      toast('Erro de conexão no login.', 'error');
+    }
+  }
+
+  async function fazerLogout() {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST', headers: authHeaders() });
+    } catch {}
+    adminToken = '';
+    isAdmin = false;
+    localStorage.removeItem('adminToken');
+    atualizarEstadoAuthUI();
+    toast('Sessão encerrada.');
+  }
+
+  function toggleAuth() {
+    if (isAdmin) {
+      fazerLogout();
+      return;
+    }
+    abrirModalLogin();
+  }
 
   document.getElementById('telefone').addEventListener('input', function () {
     let v = this.value.replace(/\D/g, '').slice(0, 11);
@@ -461,6 +595,10 @@
   async function salvar() {
     if (!validar()) return;
     const isEdit = document.getElementById('editId').value !== '';
+    if (isEdit && !isAdmin) {
+      toast('Faça login para editar cadastros.', 'error');
+      return;
+    }
     const obs = document.getElementById('observacoes').value.trim();
     const payload = {
       nome:        document.getElementById('nome').value.trim(),
@@ -473,7 +611,7 @@
     try {
       const r = await fetch(isEdit ? `/api/clientes/${editId}` : '/api/clientes', {
         method: isEdit ? 'PUT' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(payload),
       });
       const data = await r.json();
@@ -491,6 +629,10 @@
   }
 
   function editarRegistro(id) {
+    if (!isAdmin) {
+      toast('Somente admin pode editar.', 'error');
+      return;
+    }
     const r = todos.find(c => c.id === id);
     if (!r) return;
     fecharModalObs();
@@ -522,13 +664,25 @@
     document.getElementById('btnCancelar').style.display = 'none';
   }
 
-  function abrirModalExcluir(id) { deleteId = id; document.getElementById('modalExcluir').classList.add('show'); }
+  function abrirModalExcluir(id) {
+    if (!isAdmin) {
+      toast('Somente admin pode excluir.', 'error');
+      return;
+    }
+    deleteId = id;
+    document.getElementById('modalExcluir').classList.add('show');
+  }
   function fecharModalExcluir() { deleteId = null; document.getElementById('modalExcluir').classList.remove('show'); }
 
   async function confirmarExclusao() {
     if (!deleteId) return;
     try {
-      await fetch(`${API}/${deleteId}`, { method: 'DELETE' });
+      const r = await fetch(`${API}/${deleteId}`, { method: 'DELETE', headers: authHeaders() });
+      if (!r.ok) {
+        const data = await r.json();
+        toast(data.erro || 'Sem permissão para excluir.', 'error');
+        return;
+      }
       toast('Cadastro removido.', 'error');
       const ei = document.getElementById('editId').value;
       if (ei && parseInt(ei) === deleteId) limparForm();
@@ -560,6 +714,10 @@
   }
 
   async function toggleStatusModal(campo) {
+    if (!isAdmin) {
+      toast('Faça login para editar dados.', 'error');
+      return;
+    }
     const c = todos.find(r => r.id === obsClienteId);
     if (!c) return;
     const novoValor = c[campo] === 1 ? 0 : 1;
@@ -568,7 +726,7 @@
     try {
       await fetch(`/api/clientes/${obsClienteId}/status`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ campo, valor: novoValor }),
       });
     } catch {
@@ -605,12 +763,16 @@
   }
 
   async function adicionarObservacao() {
+    if (!isAdmin) {
+      toast('Faça login para editar dados.', 'error');
+      return;
+    }
     const texto = document.getElementById('novaObs').value.trim();
     if (!texto) return;
     try {
       const r = await fetch(`/api/clientes/${obsClienteId}/historico`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ texto }),
       });
       if (!r.ok) { toast('Erro ao salvar observação.', 'error'); return; }
@@ -652,10 +814,10 @@
         <td><span class="badge-matricula">${esc(r.matricula)}</span></td>
         <td>${obsHtml}</td>
         <td>${esc(r.data_cadastro)}</td>
-        <td><div class="td-actions">
-          <button class="btn btn-edit" onclick="editarRegistro(${r.id})">Editar</button>
-          <button class="btn btn-danger" onclick="abrirModalExcluir(${r.id})">Excluir</button>
-        </div></td>
+        <td>${isAdmin
+          ? `<div class="td-actions"><button class="btn btn-edit" onclick="editarRegistro(${r.id})">Editar</button><button class="btn btn-danger" onclick="abrirModalExcluir(${r.id})">Excluir</button></div>`
+          : '<span class="obs-vazio">Somente leitura</span>'}
+        </td>
       `;
       tbody.appendChild(tr);
     });
@@ -684,7 +846,9 @@
 
   document.getElementById('modalExcluir').addEventListener('click', function(e) { if (e.target===this) fecharModalExcluir(); });
   document.getElementById('modalObs').addEventListener('click', function(e) { if (e.target===this) fecharModalObs(); });
+  document.getElementById('modalLogin').addEventListener('click', function(e) { if (e.target===this) fecharModalLogin(); });
 
+  verificarSessao();
   carregarDados();
 </script>
 </body>

@@ -1,9 +1,25 @@
 const express = require('express');
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
+const crypto = require('crypto');
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
+const ADMIN_USER = process.env.ADMIN_USER || 'admin';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
+const adminSessions = new Set();
+
+function getToken(req) {
+  return String(req.get('x-admin-token') || '').trim();
+}
+
+function requireAdmin(req, res, next) {
+  const token = getToken(req);
+  if (!token || !adminSessions.has(token)) {
+    return res.status(401).json({ erro: 'Acesso restrito. Faça login para editar ou excluir.' });
+  }
+  next();
+}
 
 const db = new sqlite3.Database(path.join(__dirname, 'atendimentos.db'), (err) => {
   if (err) { console.error('Erro ao abrir banco:', err.message); process.exit(1); }
@@ -39,6 +55,30 @@ db.serialize(() => {
 
 app.use(express.json());
 app.use(express.static(__dirname));
+
+app.post('/api/auth/login', (req, res) => {
+  const { usuario, senha } = req.body || {};
+  if (usuario !== ADMIN_USER || senha !== ADMIN_PASSWORD) {
+    return res.status(401).json({ erro: 'Usuário ou senha inválidos.' });
+  }
+  const token = crypto.randomBytes(24).toString('hex');
+  adminSessions.add(token);
+  res.json({ ok: true, token, usuario: ADMIN_USER });
+});
+
+app.get('/api/auth/status', (req, res) => {
+  const token = getToken(req);
+  if (!token || !adminSessions.has(token)) {
+    return res.status(401).json({ autenticado: false });
+  }
+  res.json({ autenticado: true, usuario: ADMIN_USER });
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  const token = getToken(req);
+  if (token) adminSessions.delete(token);
+  res.json({ ok: true });
+});
 
 // Listar todos
 app.get('/api/clientes', (req, res) => {
@@ -92,7 +132,7 @@ app.post('/api/clientes', (req, res) => {
 });
 
 // Atualizar
-app.put('/api/clientes/:id', (req, res) => {
+app.put('/api/clientes/:id', requireAdmin, (req, res) => {
   const { nome, telefone, matricula, observacoes, nova_observacao } = req.body;
   const { id } = req.params;
   if (!nome || !telefone || !matricula)
@@ -134,7 +174,7 @@ app.put('/api/clientes/:id', (req, res) => {
 });
 
 // Excluir
-app.delete('/api/clientes/:id', (req, res) => {
+app.delete('/api/clientes/:id', requireAdmin, (req, res) => {
   db.run('DELETE FROM clientes WHERE id = ?', [req.params.id], (err) => {
     if (err) return res.status(500).json({ erro: 'Erro ao excluir.' });
     res.json({ ok: true });
@@ -142,7 +182,7 @@ app.delete('/api/clientes/:id', (req, res) => {
 });
 
 // Atualizar status (acesso/chegou)
-app.patch('/api/clientes/:id/status', (req, res) => {
+app.patch('/api/clientes/:id/status', requireAdmin, (req, res) => {
   const { campo, valor } = req.body;
   if (!['acesso_maquina', 'chegou_maquina'].includes(campo))
     return res.status(400).json({ erro: 'Campo inválido.' });
@@ -169,7 +209,7 @@ app.get('/api/clientes/:id/historico', (req, res) => {
 });
 
 // Adicionar observação ao histórico
-app.post('/api/clientes/:id/historico', (req, res) => {
+app.post('/api/clientes/:id/historico', requireAdmin, (req, res) => {
   const { texto } = req.body;
   if (!texto || !texto.trim())
     return res.status(400).json({ erro: 'Texto da observação é obrigatório.' });
