@@ -8,6 +8,15 @@ const PORT = Number(process.env.PORT) || 3000;
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
 const adminSessions = new Set();
+const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Sao_Paulo';
+
+function dataBR() {
+  return new Date().toLocaleDateString('pt-BR', { timeZone: APP_TIMEZONE });
+}
+
+function dataHoraBR() {
+  return new Date().toLocaleString('pt-BR', { timeZone: APP_TIMEZONE });
+}
 
 function getToken(req) {
   return String(req.get('x-admin-token') || '').trim();
@@ -32,7 +41,7 @@ db.serialize(() => {
       id             INTEGER PRIMARY KEY AUTOINCREMENT,
       nome           TEXT NOT NULL,
       telefone       TEXT NOT NULL,
-      matricula      TEXT NOT NULL UNIQUE,
+      matricula      TEXT NOT NULL,
       observacoes    TEXT DEFAULT '',
       data_cadastro  TEXT NOT NULL,
       acesso_maquina INTEGER DEFAULT 0,
@@ -51,6 +60,40 @@ db.serialize(() => {
       FOREIGN KEY (cliente_id) REFERENCES clientes(id) ON DELETE CASCADE
     )
   `);
+
+  // Migra bases antigas com restrição UNIQUE em matricula para permitir repetição.
+  db.get("SELECT sql FROM sqlite_master WHERE type='table' AND name='clientes'", [], (err, row) => {
+    if (err || !row || !row.sql) return;
+    const temUniqueMatricula = /matricula\s+TEXT\s+NOT\s+NULL\s+UNIQUE/i.test(row.sql);
+    if (!temUniqueMatricula) return;
+
+    db.exec(`
+      PRAGMA foreign_keys=OFF;
+      BEGIN TRANSACTION;
+      CREATE TABLE clientes_new (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        nome           TEXT NOT NULL,
+        telefone       TEXT NOT NULL,
+        matricula      TEXT NOT NULL,
+        observacoes    TEXT DEFAULT '',
+        data_cadastro  TEXT NOT NULL,
+        acesso_maquina INTEGER DEFAULT 0,
+        chegou_maquina INTEGER DEFAULT 0
+      );
+      INSERT INTO clientes_new (id, nome, telefone, matricula, observacoes, data_cadastro, acesso_maquina, chegou_maquina)
+      SELECT id, nome, telefone, matricula, observacoes, data_cadastro, acesso_maquina, chegou_maquina FROM clientes;
+      DROP TABLE clientes;
+      ALTER TABLE clientes_new RENAME TO clientes;
+      COMMIT;
+      PRAGMA foreign_keys=ON;
+    `, (migrateErr) => {
+      if (migrateErr) {
+        console.error('Erro ao migrar tabela clientes para remover UNIQUE de matricula:', migrateErr.message);
+        return;
+      }
+      console.log('Migração aplicada: matricula agora permite valores repetidos.');
+    });
+  });
 });
 
 app.use(express.json());
@@ -95,18 +138,12 @@ app.post('/api/clientes', (req, res) => {
     return res.status(400).json({ erro: 'Campos obrigatórios ausentes.' });
 
   const matriculaNormalizada = String(matricula).trim().toUpperCase();
-  db.get('SELECT id FROM clientes WHERE matricula = ?', [matriculaNormalizada], (err, existente) => {
-    if (err) return res.status(500).json({ erro: 'Erro ao validar matrícula.' });
-    if (existente) return res.status(409).json({ erro: 'Matrícula já cadastrada.' });
-
-  const data_cadastro = new Date().toLocaleDateString('pt-BR');
+  const data_cadastro = dataBR();
   db.run(
     'INSERT INTO clientes (nome, telefone, matricula, observacoes, data_cadastro) VALUES (?,?,?,?,?)',
     [nome, telefone, matriculaNormalizada, observacoes || '', data_cadastro],
     function (err) {
       if (err) {
-        if (err.message.includes('UNIQUE'))
-          return res.status(409).json({ erro: 'Matrícula já cadastrada.' });
         return res.status(500).json({ erro: 'Erro ao salvar.' });
       }
       const clienteId = this.lastID;
@@ -117,7 +154,7 @@ app.post('/api/clientes', (req, res) => {
         });
       };
       if (obs) {
-        const dataHora = new Date().toLocaleString('pt-BR');
+        const dataHora = dataHoraBR();
         db.run(
           'INSERT INTO historico_observacoes (cliente_id, texto, data_hora) VALUES (?,?,?)',
           [clienteId, obs, dataHora],
@@ -128,7 +165,6 @@ app.post('/api/clientes', (req, res) => {
       }
     }
   );
-  });
 });
 
 // Atualizar
@@ -139,17 +175,11 @@ app.put('/api/clientes/:id', requireAdmin, (req, res) => {
     return res.status(400).json({ erro: 'Campos obrigatórios ausentes.' });
 
   const matriculaNormalizada = String(matricula).trim().toUpperCase();
-  db.get('SELECT id FROM clientes WHERE matricula = ? AND id <> ?', [matriculaNormalizada, id], (err, existente) => {
-    if (err) return res.status(500).json({ erro: 'Erro ao validar matrícula.' });
-    if (existente) return res.status(409).json({ erro: 'Matrícula já cadastrada por outro registro.' });
-
   db.run(
     'UPDATE clientes SET nome=?, telefone=?, matricula=?, observacoes=? WHERE id=?',
     [nome, telefone, matriculaNormalizada, observacoes || '', id],
     function (err) {
       if (err) {
-        if (err.message.includes('UNIQUE'))
-          return res.status(409).json({ erro: 'Matrícula já cadastrada por outro registro.' });
         return res.status(500).json({ erro: 'Erro ao atualizar.' });
       }
       const obs = (nova_observacao || '').trim();
@@ -159,7 +189,7 @@ app.put('/api/clientes/:id', requireAdmin, (req, res) => {
         });
       };
       if (obs) {
-        const dataHora = new Date().toLocaleString('pt-BR');
+        const dataHora = dataHoraBR();
         db.run(
           'INSERT INTO historico_observacoes (cliente_id, texto, data_hora) VALUES (?,?,?)',
           [id, obs, dataHora],
@@ -170,7 +200,6 @@ app.put('/api/clientes/:id', requireAdmin, (req, res) => {
       }
     }
   );
-  });
 });
 
 // Excluir
@@ -214,7 +243,7 @@ app.post('/api/clientes/:id/historico', requireAdmin, (req, res) => {
   if (!texto || !texto.trim())
     return res.status(400).json({ erro: 'Texto da observação é obrigatório.' });
 
-  const dataHora = new Date().toLocaleString('pt-BR');
+  const dataHora = dataHoraBR();
   db.run(
     'INSERT INTO historico_observacoes (cliente_id, texto, data_hora) VALUES (?,?,?)',
     [req.params.id, texto.trim(), dataHora],
